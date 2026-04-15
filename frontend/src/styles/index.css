@@ -1,0 +1,422 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-slideIn {
+  animation: slideIn 0.3s ease-out;
+}
+
+.animate-slideInLeft {
+  animation: slideInLeft 0.4s ease-out forwards;
+  opacity: 0;
+}
+
+/* Swiss Design System - Global Styles */
+
+:root {
+  /* Color tokens */
+  --color-primary: #0ea5e9;
+  --color-primary-dark: #0369a1;
+  --color-text: #171717;
+  --color-text-secondary: #525252;
+  --color-background: #ffffff;
+  --color-surface: #fafafa;
+  --color-border: #e5e5e5;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  
+  /* Spacing - 8px grid system */
+  --spacing-unit: 0.5rem;
+  
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-base: 250ms ease;
+  --transition-slow: 350ms ease;
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+
+  /* Theme-adaptive design tokens — light mode values */
+  --color-bg-dark: 245 247 250;
+  --color-card-dark: 255 255 255;
+  --color-card-hover: 243 244 246;
+  --color-surface-dark: 248 250 252;
+  --color-surface-border: 229 231 235;
+  --color-sidebar: 249 250 251;
+  --color-sidebar-hover: 241 245 249;
+  --color-sidebar-border: 229 231 235;
+  --color-muted: 100 116 139;
+}
+
+/* Dark mode overrides for custom design tokens */
+.dark {
+  --color-bg-dark: 16 25 34;
+  --color-card-dark: 27 37 47;
+  --color-card-hover: 34 46 58;
+  --color-surface-dark: 28 33 39;
+  --color-surface-border: 59 71 84;
+  --color-sidebar: 17 20 24;
+  --color-sidebar-hover: 40 48 57;
+  --color-sidebar-border: 40 48 57;
+  --color-muted: 157 171 185;
+}
+
+@layer base {
+  * {
+    @apply border-gray-300 dark:border-gray-700;
+  }
+  
+  body {
+    @apply bg-gray-50 dark:bg-[#101922] text-gray-900 dark:text-white font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    font-variation-settings: 'opsz' auto;
+  }
+  
+  /* Support for theme-aware colors */
+  .bg-background {
+    @apply bg-gray-50 dark:bg-[#101922];
+  }
+  
+  .bg-surface {
+    @apply bg-white dark:bg-[#1c2127];
+  }
+  
+  .bg-card {
+    @apply bg-white dark:bg-[#1b252f];
+  }
+  
+  .bg-sidebar {
+    @apply bg-white dark:bg-[#111418];
+  }
+  
+  .text-primary {
+    @apply text-gray-900 dark:text-white;
+  }
+  
+  .text-secondary {
+    @apply text-gray-600 dark:text-gray-400;
+  }
+  
+  .border-theme {
+    @apply border-gray-200 dark:border-[#283039];
+  }
+  
+  /* Swiss typography hierarchy */
+  h1 {
+    @apply text-4xl md:text-5xl font-semibold tracking-tight;
+  }
+  
+  h2 {
+    @apply text-3xl md:text-4xl font-semibold tracking-tight;
+  }
+  
+  h3 {
+    @apply text-2xl md:text-3xl font-medium tracking-tight;
+  }
+  
+  h4 {
+    @apply text-xl md:text-2xl font-medium;
+  }
+  
+  h5 {
+    @apply text-lg md:text-xl font-medium;
+  }
+  
+  h6 {
+    @apply text-base md:text-lg font-medium;
+  }
+  
+  p {
+    @apply text-base leading-relaxed;
+  }
+  
+  /* Focus styles - high contrast for accessibility */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2;
+  }
+}
+
+@layer components {
+  /* Swiss grid container */
+  .container-swiss {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+  
+  /* Card component base */
+  .card {
+    @apply bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm;
+  }
+  
+  /* Button base styles */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition-all duration-200;
+    @apply focus:outline-none focus:ring-2 focus:ring-offset-2;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .btn-primary {
+    @apply bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500;
+    @apply active:scale-95 transform;
+  }
+  
+  .btn-secondary {
+    @apply bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-gray-600 focus:ring-gray-500;
+    @apply active:scale-95 transform;
+  }
+  
+  .btn-outline {
+    @apply border-2 border-gray-400 dark:border-gray-500 bg-transparent hover:bg-gray-50 dark:hover:bg-gray-800 focus:ring-gray-500;
+    @apply active:scale-95 transform;
+  }
+  
+  /* Input base styles */
+  .input {
+    @apply w-full px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-400 dark:border-gray-500 rounded-lg;
+    @apply text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
+    @apply transition-all duration-200;
+  }
+  
+  .input-error {
+    @apply border-error focus:ring-error;
+  }
+  
+  /* Label styles */
+  .label {
+    @apply block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5;
+  }
+  
+  /* Swiss grid layout */
+  .grid-swiss {
+    @apply grid gap-4 md:gap-6 lg:gap-8;
+  }
+}
+
+@layer utilities {
+  /* Animation utilities */
+  .animate-in {
+    animation: fadeIn 0.3s ease-in-out;
+  }
+  
+  .animate-slide-up {
+    animation: slideUp 0.4s ease-out;
+  }
+  
+  .animate-scale {
+    animation: scaleIn 0.2s ease-out;
+  }
+  
+  /* Interaction utilities */
+  .interactive {
+    @apply transition-all duration-200 cursor-pointer;
+    @apply hover:scale-[1.02] active:scale-[0.98];
+  }
+  
+  .interactive-subtle {
+    @apply transition-all duration-200 cursor-pointer;
+    @apply hover:bg-gray-50 dark:hover:bg-gray-800 active:bg-gray-100 dark:active:bg-gray-700;
+  }
+  
+  /* Glass morphism effect */
+  .glass {
+    @apply bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border border-white/20 dark:border-gray-700/20;
+  }
+  
+  /* Text gradient */
+  .text-gradient {
+    @apply bg-gradient-to-r from-primary-600 to-primary-400 bg-clip-text text-transparent;
+  }
+  
+  /* Scrollbar styling */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-gray-400 dark:bg-gray-500 rounded-full border border-gray-500 dark:border-gray-400;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-500 dark:bg-gray-400;
+  }
+}
+
+/* Keyframe animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Loading spinner */
+.spinner {
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid var(--color-primary);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* =====================================================
+   LIGHT MODE THEME ADAPTATION
+   Background tokens switch via CSS vars (:root / .dark).
+   Text tokens need these manual overrides.
+   ===================================================== */
+
+/* ── Generic: dark-first text → readable dark in light mode ── */
+html:not(.dark) .text-white   { color: #111827; }
+html:not(.dark) .text-gray-200 { color: #374151; }
+html:not(.dark) .text-gray-300 { color: #6b7280; }
+
+/* ── Exceptions: solid-colored buttons/badges keep white text ──
+   Two-class selectors specificity (0,3,1) beats generic (0,2,1). */
+html:not(.dark) .bg-primary.text-white,
+html:not(.dark) .bg-green-600.text-white,
+html:not(.dark) .bg-green-700.text-white,
+html:not(.dark) .bg-blue-600.text-white,
+html:not(.dark) .bg-blue-700.text-white,
+html:not(.dark) .bg-red-500.text-white,
+html:not(.dark) .bg-red-600.text-white,
+html:not(.dark) .bg-orange-600.text-white,
+html:not(.dark) .bg-orange-700.text-white,
+html:not(.dark) .bg-indigo-500.text-white,
+html:not(.dark) .bg-indigo-600.text-white,
+html:not(.dark) .bg-purple-600.text-white,
+html:not(.dark) .bg-purple-700.text-white,
+html:not(.dark) .bg-emerald-600.text-white,
+html:not(.dark) .bg-teal-600.text-white { color: white; }
+
+/* ── Child elements inside those same solid containers ── */
+html:not(.dark) .bg-primary .text-white,
+html:not(.dark) .bg-green-600 .text-white,
+html:not(.dark) .bg-green-700 .text-white,
+html:not(.dark) .bg-blue-600 .text-white,
+html:not(.dark) .bg-blue-700 .text-white,
+html:not(.dark) .bg-red-500  .text-white,
+html:not(.dark) .bg-red-600  .text-white,
+html:not(.dark) .bg-orange-600 .text-white,
+html:not(.dark) .bg-orange-700 .text-white,
+html:not(.dark) .bg-indigo-500 .text-white,
+html:not(.dark) .bg-indigo-600 .text-white,
+html:not(.dark) .bg-purple-600 .text-white,
+html:not(.dark) .bg-purple-700 .text-white,
+html:not(.dark) .bg-emerald-600 .text-white,
+html:not(.dark) .bg-teal-600 .text-white { color: white; }
+
+/* ── Fix form inputs ── */
+html:not(.dark) input:not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+html:not(.dark) textarea,
+html:not(.dark) select { color: #111827; }
+
+/* ── Micro-block: colored badge/chip light-mode fixes ──
+   Dark-opacity tints (bg-*-900/20) look faint on white.
+   text-*-400 colors are too light to read on white.       */
+
+/* Badge backgrounds → proper light tints */
+html:not(.dark) .bg-yellow-900\/20  { background-color: #fef9c3; }
+html:not(.dark) .bg-orange-900\/20  { background-color: #fff7ed; }
+html:not(.dark) .bg-red-900\/20     { background-color: #fef2f2; }
+html:not(.dark) .bg-green-900\/20   { background-color: #f0fdf4; }
+html:not(.dark) .bg-blue-900\/20    { background-color: #eff6ff; }
+html:not(.dark) .bg-purple-900\/20  { background-color: #faf5ff; }
+html:not(.dark) .bg-cyan-900\/20    { background-color: #ecfeff; }
+
+/* Badge borders → lighter shades */
+html:not(.dark) .border-yellow-800  { border-color: #fde68a; }
+html:not(.dark) .border-orange-800  { border-color: #fed7aa; }
+html:not(.dark) .border-red-800     { border-color: #fecaca; }
+html:not(.dark) .border-green-800   { border-color: #bbf7d0; }
+html:not(.dark) .border-blue-800    { border-color: #bfdbfe; }
+html:not(.dark) .border-purple-800  { border-color: #e9d5ff; }
+
+/* Badge text → darker tone for readability on light bg */
+html:not(.dark) .text-yellow-400    { color: #b45309; }
+html:not(.dark) .text-orange-400    { color: #c2410c; }
+html:not(.dark) .text-red-400       { color: #b91c1c; }
+html:not(.dark) .text-green-400     { color: #166534; }
+html:not(.dark) .text-blue-400      { color: #1d4ed8; }
+html:not(.dark) .text-purple-400    { color: #6d28d9; }
+html:not(.dark) .text-indigo-400    { color: #4338ca; }
+html:not(.dark) .text-cyan-400      { color: #0e7490; }
+html:not(.dark) .text-pink-400      { color: #be185d; }
