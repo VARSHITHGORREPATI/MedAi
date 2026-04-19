@@ -23,36 +23,51 @@ from config.settings import settings
 
 class RAGService:
     def __init__(self):
-        """Initialize RAG service with FREE local embeddings (sentence-transformers)"""
-        try:
-            # Use local sentence-transformers model (FREE, no API needed!)
-            # Silence the BertModel LOAD REPORT printed to stdout
-            with contextlib.redirect_stdout(io.StringIO()):
-                self.embeddings = HuggingFaceEmbeddings(
-                    model_name="all-MiniLM-L6-v2",  # Small, fast, accurate
-                    model_kwargs={'device': 'cpu'},
-                    encode_kwargs={'normalize_embeddings': True}
-                )
-            self.embeddings_available = True
-            print("✅ Using local embeddings (sentence-transformers) - FREE & UNLIMITED!")
-        except Exception as e:
-            self.embeddings = None
-            self.embeddings_available = False
-            print(f"⚠️ Warning: Could not load embeddings: {e}")
-        
+        """RAG service: embeddings load lazily on first use so API startup is not blocked."""
+        self.embeddings = None
+        self.embeddings_available = False
+        self._embeddings_lock = asyncio.Lock()
+        self._embeddings_load_attempted = False
+
         self.chroma_db = None
         self.faiss_db = None
         self.initialized = False
+
+    def _load_embeddings_sync(self) -> None:
+        if self._embeddings_load_attempted:
+            return
+        self._embeddings_load_attempted = True
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.embeddings = HuggingFaceEmbeddings(
+                    model_name="all-MiniLM-L6-v2",
+                    model_kwargs={"device": "cpu"},
+                    encode_kwargs={"normalize_embeddings": True},
+                )
+            self.embeddings_available = True
+            print("[OK] Using local embeddings (sentence-transformers)")
+        except Exception as e:
+            self.embeddings = None
+            self.embeddings_available = False
+            print(f"[WARN] Could not load embeddings: {e}")
+
+    async def _ensure_embeddings(self) -> None:
+        async with self._embeddings_lock:
+            if self._embeddings_load_attempted:
+                return
+            await asyncio.to_thread(self._load_embeddings_sync)
     
     async def initialize(self):
         """Initialize vector databases"""
         if self.initialized:
             return
-        
+
+        await self._ensure_embeddings()
         if not self.embeddings_available:
-            print("❌ Cannot initialize RAG: embeddings not available")
+            print("[WARN] Cannot initialize RAG: embeddings not available")
+            self.initialized = True
             return
-        
+
         try:
             # Try to load existing Chroma database
             if os.path.exists(settings.CHROMA_PERSIST_DIR):
@@ -60,7 +75,7 @@ class RAGService:
                     persist_directory=settings.CHROMA_PERSIST_DIR,
                     embedding_function=self.embeddings
                 )
-                print("✅ Loaded existing Chroma database")
+                print("[OK] Loaded existing Chroma database")
             
             # Try to load existing FAISS database
             if os.path.exists(f"{settings.FAISS_INDEX_PATH}/index.faiss"):
@@ -69,18 +84,20 @@ class RAGService:
                     self.embeddings,
                     allow_dangerous_deserialization=True
                 )
-                print("✅ Loaded existing FAISS database")
+                print("[OK] Loaded existing FAISS database")
             
             self.initialized = True
             
         except Exception as e:
-            print(f"⚠️ Warning: Could not load vector databases: {str(e)}")
+            print(f"[WARN] Could not load vector databases: {str(e)}")
             print("You can create them using the ingest_medical_documents method")
-    
+        self.initialized = True
+
     async def ingest_medical_documents(self, documents_path: str):
         """Ingest medical documents into vector databases"""
+        await self._ensure_embeddings()
         if not self.embeddings_available:
-            raise ValueError("GEMINI_API_KEY not configured. Cannot create embeddings.")
+            raise ValueError("Local embeddings could not be loaded. Cannot create vector index.")
         
         # Load documents
         loader = DirectoryLoader(
@@ -112,14 +129,24 @@ class RAGService:
         )
         self.faiss_db.save_local(settings.FAISS_INDEX_PATH)
         
-        print(f"✅ Ingested {len(splits)} document chunks into vector databases")
+        print(f"[OK] Ingested {len(splits)} document chunks into vector databases")
         self.initialized = True
     
     async def search_medical_knowledge(self, query: str, k: int = 3) -> List[dict]:
         """Search medical knowledge base using RAG"""
         if not self.initialized:
             await self.initialize()
-        
+
+        if not self.embeddings_available:
+            return [
+                {
+                    "content": "General medical advice: Always consult with healthcare professionals for personalized medical advice.",
+                    "metadata": {"title": "General Medical Guidance"},
+                    "score": 0.5,
+                    "source": "default",
+                }
+            ]
+
         results = []
         
         try:
@@ -146,7 +173,7 @@ class RAGService:
                     })
         
         except Exception as e:
-            print(f"⚠️ Warning: Vector search failed: {str(e)}")
+            print(f"[WARN] Vector search failed: {str(e)}")
             print("Returning default medical knowledge")
             # Return some default medical knowledge if databases aren't available
             results = [

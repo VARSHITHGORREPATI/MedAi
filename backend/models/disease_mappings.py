@@ -310,6 +310,57 @@ DISEASE_TESTS = {
 
 
 MODALITY_DEFAULTS = {
+    "text": {
+        "doctor": {
+            "specialty": "General Physician",
+            "urgency": "routine",
+            "consultation_type": "in-person or teleconsultation",
+            "description": "Symptom-text ML triage (TF-IDF + classifier or keyword fallback); not a diagnosis.",
+        },
+        "tests": [
+            "Focused history and physical examination",
+            "Directed labs or imaging based on clinical suspicion",
+        ],
+        "treatment": {
+            "medications": ["No medications from triage alone—follow clinician guidance"],
+            "lifestyle": ["Rest, hydration, and monitoring as appropriate"],
+            "next_steps": ["Book appropriate specialty visit if symptoms persist or worsen"],
+        },
+        "info": {
+            "medical_name": "Symptom-based triage",
+            "description": "Text symptoms are scored by a lightweight ML model to suggest a likely category.",
+            "common_age": "Varies",
+            "prevalence": "N/A",
+            "causes": "Requires clinical evaluation",
+        },
+    },
+    "basic": {
+        "doctor": {
+            "specialty": "General Physician (informational only)",
+            "urgency": "routine",
+            "consultation_type": "education / general questions",
+            "description": "Basic mode uses general vision AI—not clinical EfficientNet models.",
+        },
+        "tests": [
+            "No automated clinical tests from Basic mode",
+            "Use Skin/Chest/Eye/Brain only for matching medical images when weights exist",
+        ],
+        "treatment": {
+            "medications": ["Basic mode does not suggest medications"],
+            "lifestyle": ["Use BASIC for charts, screenshots, and general questions"],
+            "next_steps": [
+                "Switch to Skin / Chest / Eye / Brain only for that type of medical image",
+                "See a clinician for health concerns",
+            ],
+        },
+        "info": {
+            "medical_name": "General visual description",
+            "description": "General-purpose image understanding, not a device diagnosis.",
+            "common_age": "N/A",
+            "prevalence": "N/A",
+            "causes": "N/A",
+        },
+    },
     "skin": {
         "doctor": {
             "specialty": "Dermatologist",
@@ -448,6 +499,14 @@ MODALITY_DEFAULTS = {
     },
 }
 
+def _normalize_modality(modality: str) -> str:
+    m = (modality or "").strip().lower()
+    if m in ("", "default"):
+        return "skin"
+    if m in ("txt",):
+        return "text"
+    return m
+
 
 def get_doctor_recommendation(disease: str, modality: str = "skin") -> Dict:
     """
@@ -462,7 +521,7 @@ def get_doctor_recommendation(disease: str, modality: str = "skin") -> Dict:
     if disease in DISEASE_TO_DOCTOR:
         return DISEASE_TO_DOCTOR[disease]
 
-    modality_defaults = MODALITY_DEFAULTS.get(modality, MODALITY_DEFAULTS["skin"])
+    modality_defaults = MODALITY_DEFAULTS.get(_normalize_modality(modality), MODALITY_DEFAULTS["skin"])
     return modality_defaults["doctor"]
 
 
@@ -479,7 +538,7 @@ def get_treatment_recommendations(disease: str, modality: str = "skin") -> Dict:
     if disease in DISEASE_TREATMENTS:
         return DISEASE_TREATMENTS[disease]
 
-    modality_defaults = MODALITY_DEFAULTS.get(modality, MODALITY_DEFAULTS["skin"])
+    modality_defaults = MODALITY_DEFAULTS.get(_normalize_modality(modality), MODALITY_DEFAULTS["skin"])
     return modality_defaults["treatment"]
 
 
@@ -496,7 +555,7 @@ def get_disease_info(disease: str, modality: str = "skin") -> Dict:
     if disease in DISEASE_INFO:
         return DISEASE_INFO[disease]
 
-    modality_defaults = MODALITY_DEFAULTS.get(modality, MODALITY_DEFAULTS["skin"])
+    modality_defaults = MODALITY_DEFAULTS.get(_normalize_modality(modality), MODALITY_DEFAULTS["skin"])
     info = dict(modality_defaults["info"])
     info["medical_name"] = disease
     return info
@@ -513,6 +572,7 @@ def get_full_disease_context(disease: str, confidence: float, modality: str = "s
     Returns:
         Comprehensive dictionary with all disease information
     """
+    modality = _normalize_modality(modality)
     doctor_info = get_doctor_recommendation(disease, modality=modality)
     treatment_info = get_treatment_recommendations(disease, modality=modality)
     disease_details = get_disease_info(disease, modality=modality)

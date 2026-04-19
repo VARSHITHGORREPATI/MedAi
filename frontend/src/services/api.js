@@ -1,7 +1,10 @@
 import axios from 'axios';
 
 // API Base URL - Update this to your backend URL when deployed
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// In dev, empty base uses Vite proxy (vite.config.js) so /api -> backend without CORS issues.
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV ? '' : 'http://localhost:8000');
 
 // Create axios instance with default config
 const api = axios.create({
@@ -148,11 +151,12 @@ export const chatAPI = {
     return response.data;
   },
 
-  // Upload image/report
-  uploadFile: async (chatId, file) => {
+  // Upload document / image for text extraction + AI reply
+  uploadFile: async (file, sessionId = null) => {
     const formData = new FormData();
     formData.append('file', file);
-    const response = await api.post(`/api/chat/${chatId}/upload`, formData, {
+    if (sessionId) formData.append('session_id', sessionId);
+    const response = await api.post('/api/chat/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return response.data;
@@ -352,6 +356,21 @@ export const analysisAPI = {
   // Health trends
   getHealthTrendsAnalysis: async () => {
     const response = await api.get('/api/analysis/health-trends');
+    return response.data;
+  },
+};
+
+// Unified diagnosis APIs (decision layer + RAG + doctor mapping)
+export const diagnosisAPI = {
+  completeDiagnosis: async ({ symptoms, imageFile, modality = 'skin' }) => {
+    const formData = new FormData();
+    if (symptoms) formData.append('symptoms', symptoms);
+    formData.append('modality', modality);
+    if (imageFile) formData.append('image', imageFile);
+
+    const response = await api.post('/api/diagnosis/complete', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
     return response.data;
   },
 };

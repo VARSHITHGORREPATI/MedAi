@@ -1,6 +1,7 @@
 from openai import AsyncOpenAI
 from typing import List, Tuple, Optional
 from datetime import datetime
+import io
 import os
 import logging
 import httpx
@@ -42,6 +43,92 @@ class AIService:
             logger.warning(f"RAG service initialization failed: {e}. RAG features will be disabled.")
             self.rag_service = None
             self.rag_enabled = False
+
+    @staticmethod
+    def _resize_pil_for_vision(img, max_edge: int = 1280):
+        from PIL import Image as PILImage
+
+        w, h = img.size
+        if max(w, h) <= max_edge:
+            return img
+        ratio = max_edge / float(max(w, h))
+        new_w = max(1, int(w * ratio))
+        new_h = max(1, int(h * ratio))
+        try:
+            resample = PILImage.Resampling.LANCZOS
+        except AttributeError:
+            resample = PILImage.LANCZOS
+        return img.resize((new_w, new_h), resample)
+
+    async def extract_text_from_image(self, image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
+        """OCR / transcribe document-style images (lab reports, prescriptions) when Gemini is configured."""
+        if self.provider == "gemini" and settings.GEMINI_API_KEY:
+            try:
+                import google.generativeai as genai
+                from PIL import Image
+
+                genai.configure(api_key=settings.GEMINI_API_KEY)
+                model = genai.GenerativeModel(self.model)
+                img = Image.open(io.BytesIO(image_bytes))
+                if img.mode not in ("RGB", "L"):
+                    img = img.convert("RGB")
+                img = AIService._resize_pil_for_vision(img, max_edge=1600)
+                prompt = (
+                    "Extract all readable text from this image (OCR). "
+                    "If it is a lab report, prescription, discharge letter, or form, keep labels and values clear. "
+                    "If there is almost no text, briefly describe what is shown in 2-4 sentences."
+                )
+                response = await asyncio.to_thread(model.generate_content, [prompt, img])
+                text = (getattr(response, "text", None) or "").strip()
+                return text or "[No text returned from vision model]"
+            except Exception as exc:
+                logger.exception("Gemini image extraction failed: %s", exc)
+                return f"[Image text extraction failed: {str(exc)[:200]}]"
+
+        return ""
+
+    async def describe_image_basic(
+        self, image_bytes: bytes, mime_type: str = "image/jpeg", user_question: str = ""
+    ) -> str:
+        """Charts, screenshots, general 'what is this' — no EfficientNet weights."""
+        q = (user_question or "").strip()
+        if self.provider == "gemini" and settings.GEMINI_API_KEY:
+            try:
+                import google.generativeai as genai
+                from PIL import Image
+
+                genai.configure(api_key=settings.GEMINI_API_KEY)
+                model = genai.GenerativeModel(self.model)
+                img = Image.open(io.BytesIO(image_bytes))
+                if img.mode not in ("RGB", "L"):
+                    img = img.convert("RGB")
+                img = AIService._resize_pil_for_vision(img, max_edge=1280)
+                prompt = (
+                    "Describe this image for a non-expert: what it is (chart, screenshot, photo, etc.). "
+                    "Summarize visible text or numbers. "
+                    f"User question: \"{q if q else 'What is this?'}\" — answer using only the image. "
+                    "Do not give a disease diagnosis from medical images. Under 220 words."
+                )
+                gc = {"max_output_tokens": 768, "temperature": 0.35}
+                try:
+                    from google.generativeai.types import RequestOptions
+
+                    response = await asyncio.to_thread(
+                        model.generate_content,
+                        [prompt, img],
+                        generation_config=gc,
+                        request_options=RequestOptions(timeout=240),
+                    )
+                except TypeError:
+                    response = await asyncio.to_thread(
+                        model.generate_content, [prompt, img], generation_config=gc
+                    )
+                return (getattr(response, "text", None) or "").strip()
+            except Exception as exc:
+                logger.exception("describe_image_basic failed: %s", exc)
+                return f"[Basic mode: vision call failed: {str(exc)[:200]}]"
+
+        return "[Basic mode needs Gemini. Set AI_PROVIDER=gemini and GEMINI_API_KEY in backend/.env]"
     
     def _init_gemini(self):
         """Initialize Google Gemini (Fast & Free - Highly Recommended)"""
@@ -84,7 +171,10 @@ class AIService:
     async def get_simple_response(
         self,
         message: str,
-        conversation_history: List[dict]
+        conversation_history: List[dict],
+        *,
+        max_tokens: int = 350,
+        system_prompt: Optional[str] = None,
     ) -> str:
         """Get a simple AI response without RAG"""
         
@@ -108,11 +198,15 @@ class AIService:
                 "3. Restart the backend"
             )
         
-        # Build messages for API call
+        default_system = (
+            "You are MedAI, a medical assistant. Reply fast, concise, and organized. "
+            "Use short headings and bullet points only when useful. Keep the answer under 150 words unless the user asks for more. "
+            "Do not repeat yourself. Always mention urgent warning signs when relevant. Do not diagnose or prescribe medications."
+        )
         messages = [
             {
                 "role": "system",
-                "content": "You are MedAI, a medical assistant. Reply fast, concise, and organized. Use short headings and bullet points only when useful. Keep the answer under 150 words unless the user asks for more. Do not repeat yourself. Always mention urgent warning signs when relevant. Do not diagnose or prescribe medications."
+                "content": system_prompt or default_system,
             }
         ]
         
@@ -131,7 +225,7 @@ class AIService:
         
         try:
             logger.info(f"Calling {self.provider} API for message: {message[:50]}...")
-            result = await self._call_provider(messages, temperature=0.2, max_tokens=350)
+            result = await self._call_provider(messages, temperature=0.2, max_tokens=max_tokens)
             logger.info(f"{self.provider} API response received: {result[:100]}...")
             return result
             
@@ -277,14 +371,20 @@ class AIService:
     async def get_rag_response(
         self,
         message: str,
-        conversation_history: List[dict]
+        conversation_history: List[dict],
+        *,
+        max_output_tokens: int = 400,
     ) -> Tuple[str, Optional[List[dict]]]:
         """Get AI response enhanced with RAG (medical knowledge base)"""
         
         # If RAG is not available, fall back to simple response
         if not self.rag_enabled or not self.rag_service:
             logger.info("RAG not available, using simple response")
-            response = await self.get_simple_response(message, conversation_history)
+            response = await self.get_simple_response(
+                message,
+                conversation_history,
+                max_tokens=max(max_output_tokens, 512),
+            )
             return response, None
         
         try:
@@ -299,13 +399,27 @@ class AIService:
             
         except Exception as e:
             logger.warning(f"RAG processing failed: {e}. Falling back to simple response.")
-            response = await self.get_simple_response(message, conversation_history)
+            response = await self.get_simple_response(
+                message,
+                conversation_history,
+                max_tokens=max(max_output_tokens, 512),
+            )
             return response, None
         
+        doc_style = max_output_tokens >= 1024
+        rag_instructions = (
+            "You are MedAI. The user may have pasted document text. Give a complete, well-structured answer—do not stop mid-sentence. "
+            "Use clear headings and bullets when helpful. Cite abnormal values or concerns from the document when relevant. "
+            "Mention urgent warning signs when appropriate. Do not prescribe medications."
+            if doc_style
+            else
+            "You are MedAI. Answer quickly, clearly, and with short sections only when useful. Use the reference info below if it helps. "
+            "Be concise and mention urgent warning signs when relevant."
+        )
         messages = [
             {
                 "role": "system",
-                "content": f"You are MedAI. Answer quickly, clearly, and with short sections only when useful. Use the reference info below if it helps. Be concise and mention urgent warning signs when relevant.\n\nMedical References:\n{context}"
+                "content": f"{rag_instructions}\n\nMedical References:\n{context}",
             }
         ]
         
@@ -322,7 +436,7 @@ class AIService:
             "content": message
         })
         
-        result = await self._call_provider(messages, temperature=0.2, max_tokens=400)
+        result = await self._call_provider(messages, temperature=0.2, max_tokens=max_output_tokens)
         
         # Prepare sources for citation
         sources = [

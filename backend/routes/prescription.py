@@ -160,10 +160,15 @@ async def upload_and_parse_prescription(
         elif "pdf" in ctype or file.filename.endswith(".pdf"):
             try:
                 import io
-                import importlib
-                pdfplumber = importlib.import_module("pdfplumber")
-                with pdfplumber.open(io.BytesIO(content_bytes)) as pdf:
-                    raw_text = "\n".join(p.extract_text() or "" for p in pdf.pages)
+                from pypdf import PdfReader
+
+                reader = PdfReader(io.BytesIO(content_bytes))
+                parts = []
+                for page in reader.pages:
+                    t = page.extract_text()
+                    if t:
+                        parts.append(t)
+                raw_text = "\n".join(parts)
             except Exception:
                 raw_text = f"[PDF file: {file.filename} - unable to extract text automatically]"
         else:

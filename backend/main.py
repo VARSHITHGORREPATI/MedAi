@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from config.database import connect_db, close_db
 from config.redis import redis_client
-from routes import auth, chat, health, medicine, admin, doctor, lab_test, product, prescription, analysis, order, consultations, diagnose
+from routes import auth, chat, health, medicine, admin, doctor, lab_test, product, prescription, analysis, order, consultations, diagnose, diagnosis
 from middleware.error_handler import error_handler_middleware
 from middleware.rate_limiter import RateLimitMiddleware
 from services.reminder_scheduler import reminder_scheduler
@@ -90,6 +90,7 @@ app.include_router(product.router, prefix="/api/products", tags=["Products/Pharm
 app.include_router(prescription.router, prefix="/api", tags=["Prescriptions"])
 app.include_router(analysis.router, prefix="/api/analysis", tags=["AI Analysis"])
 app.include_router(diagnose.router, prefix="/api", tags=["Medical Image Diagnosis"])
+app.include_router(diagnosis.router, prefix="/api/diagnosis", tags=["Unified Diagnosis Pipeline"])
 app.include_router(order.router, prefix="/api/orders", tags=["Orders"])
 app.include_router(consultations.router, prefix="/api/consultations", tags=["Consultations"])
 
@@ -106,5 +107,9 @@ async def health_check():
     return {"status": "healthy", "service": "MedAI API"}
 
 if __name__ == "__main__":
+    import os
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+    # reload=True loads the app twice on Windows and often breaks heavy ML imports; opt-in with UVICORN_RELOAD=1
+    _reload = os.getenv("UVICORN_RELOAD", "").strip().lower() in ("1", "true", "yes")
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=_reload)

@@ -22,6 +22,10 @@ import {
   Sparkles,
 } from 'lucide-react';
 import ChatLayout from '../components/ChatLayout';
+import { diagnosisAPI, chatAPI } from '../services/api';
+
+const API_URL =
+  import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '' : 'http://localhost:8000');
 
 // Start with empty conversation
 const INITIAL_MESSAGES = [];
@@ -189,11 +193,85 @@ function ConversationsSidebar({ conversations, onSelectConversation, onClose, cu
   );
 }
 
+/** Strip markdown emphasis so "**HELLO**" is treated like "hello". */
+function normalizeForIntent(text) {
+  return (text || '')
+    .replace(/\*+/g, '')
+    .replace(/[_`#]/g, '')
+    .trim();
+}
+
+/**
+ * Greetings and tiny chit-chat should use general chat, not the diagnosis / triage pipeline.
+ */
+function shouldUseGeneralChat(text) {
+  const raw = (text || '').trim();
+  if (!raw) return true;
+  const t = normalizeForIntent(raw).toLowerCase();
+  if (t.length > 100) return false;
+
+  const medicalHint =
+    /\b(pain|hurt|hurts|ache|aching|fever|cough|rash|vomit|nausea|blood|dizzy|dizziness|chest|swollen|swelling|symptom|symptoms|headache|migraine|diarrhea|constipation|shortness|breath|wheez|palpitat|seizure|faint|blurred|lump|bleed|infection|uti|std|pregnant|dose|mg\b|ml\b|tablet|prescri|diagnos|tumor|cancer|stroke|heart attack|covid|flu|cold)\b/i.test(
+      t
+    );
+  if (medicalHint) return false;
+
+  const greetingOnly =
+    /^(hi+|hello+|hey+|howdy+|yo+|sup+|hiya+|gm\b|gn\b|good\s+(morning|afternoon|evening|night|day)\b|thanks|thank\s+you|thx|ty|ok+|okay|k\b|yes|no|yep|nope|bye|goodbye|ciao|see\s+ya|what'?s\s+up|whats\s+up|how\s+are\s+you|how\s+r\s+u|hru|what\s+can\s+you\s+do|who\s+are\s+you)[\s!?.,"']*$/i.test(
+      t
+    );
+  if (greetingOnly) return true;
+
+  const singleToken = /^[a-z']+$/i.test(t) && t.length <= 12;
+  if (singleToken && !medicalHint) {
+    const casualWords = new Set([
+      'hi',
+      'hello',
+      'hey',
+      'yo',
+      'sup',
+      'hiya',
+      'howdy',
+      'thanks',
+      'thx',
+      'ty',
+      'ok',
+      'okay',
+      'k',
+      'yes',
+      'no',
+      'yep',
+      'nope',
+      'bye',
+      'gm',
+      'gn',
+    ]);
+    if (casualWords.has(t)) return true;
+  }
+
+  if (t.length <= 24 && !/\d/.test(t) && !medicalHint) {
+    const wordCount = t.split(/\s+/).filter(Boolean).length;
+    if (wordCount <= 4 && !/\b(help|advise|feel|sick|ill|worried)\b/i.test(t)) return true;
+  }
+
+  return false;
+}
+
 const HEADING_REGEX = /^\*\*([^*]+?)\*\*:?\s*$/;
 const BULLET_REGEX = /^[•\-*]\s+(.*)$/;
 
+/** PDFs/labs often contain `<30`, `</b>` etc.; raw `<` breaks dangerouslySetInnerHTML. */
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function formatInlineText(text) {
-  return text.replace(/\*\*([^*]+)\*\*/g, '<span class="font-semibold text-white">$1</span>');
+  const safe = escapeHtml(text);
+  return safe.replace(/\*\*([^*]+)\*\*/g, '<span class="font-semibold text-white">$1</span>');
 }
 
 function parseResponseSections(text) {
@@ -309,7 +387,9 @@ function MessageBubble({ message }) {
         <div className="flex flex-col gap-1 items-start max-w-[90%]">
           <div className="flex items-center gap-2 mb-1">
             <p className="text-muted text-xs">MedAI Assistant</p>
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sidebar-hover text-muted">IMAGE</span>
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sidebar-hover text-muted">
+              {(diagnosis.modality || 'TEXT').toUpperCase()}
+            </span>
           </div>
           <div className="rounded-2xl rounded-tl-none px-5 py-4 bg-sidebar-hover text-white shadow-sm border border-sidebar-border/50 w-full">
             <div className="space-y-4">
@@ -396,12 +476,27 @@ function MessageBubble({ message }) {
   if (message.type === 'user') {
     return (
       <div className="flex items-end gap-3 justify-end group">
-        <div className="flex flex-col gap-1 items-end max-w-[80%]">
+        <div className="flex flex-col gap-1 items-end max-w-[min(100%,520px)]">
           <div className="flex items-center gap-2 mb-1">
             <p className="text-muted text-xs">You</p>
           </div>
+          {message.pdfPreview && (
+            <div className="w-full rounded-2xl rounded-tr-none overflow-hidden border border-white/20 bg-white/10 shadow-md">
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-white/15 bg-black/20">
+                <FileText className="w-4 h-4 text-red-300 shrink-0" />
+                <span className="text-xs font-medium text-white truncate">{message.pdfName || 'Document.pdf'}</span>
+                <span className="text-[10px] uppercase tracking-wide text-white/70 ml-auto shrink-0">PDF</span>
+              </div>
+              <embed
+                src={`${message.pdfPreview}#toolbar=0&navpanes=0`}
+                type="application/pdf"
+                className="w-full h-[200px] bg-neutral-900"
+                title="PDF attachment preview"
+              />
+            </div>
+          )}
           <div className="rounded-2xl rounded-tr-none px-5 py-4 bg-primary text-white shadow-md">
-            <p className="text-base font-medium leading-relaxed">{message.content}</p>
+            <p className="text-base font-medium leading-relaxed whitespace-pre-wrap break-words">{message.content}</p>
           </div>
           <p className="text-muted text-[11px] opacity-0 group-hover:opacity-100 transition-opacity">
             {message.time}
@@ -460,18 +555,38 @@ function ChatComposer({ onSendMessage, onNewChat }) {
   const [message, setMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [filePreview, setFilePreview] = useState(null);
-  const [selectedModality, setSelectedModality] = useState('skin');
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState(null);
+  const [selectedModality, setSelectedModality] = useState('basic');
+  /** paperclip / doc uploads → OCR & chat; image icon → medical image diagnosis model */
+  const [attachIntent, setAttachIntent] = useState('document');
   const [prescriptionParsing, setPrescriptionParsing] = useState(false);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const prescriptionInputRef = useRef(null);
 
+  useEffect(() => {
+    if (!selectedFile || selectedFile.type !== 'application/pdf') {
+      setPdfPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return;
+    }
+    const url = URL.createObjectURL(selectedFile);
+    setPdfPreviewUrl(url);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [selectedFile]);
+
   const handleSend = () => {
     if (message.trim() || selectedFile) {
-      onSendMessage(message.trim(), selectedFile, selectedModality);
+      onSendMessage(message.trim(), selectedFile, selectedModality, attachIntent);
       setMessage('');
       setSelectedFile(null);
       setFilePreview(null);
+      setPdfPreviewUrl(null);
+      setAttachIntent('document');
     }
   };
 
@@ -482,17 +597,31 @@ function ChatComposer({ onSendMessage, onNewChat }) {
     }
   };
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0];
+  const handleFileSelectDoc = (e) => {
+    const file = e.target.files?.[0];
     if (file) {
       setSelectedFile(file);
+      setAttachIntent('document');
       if (file.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.onloadend = () => { setFilePreview(reader.result); };
         reader.readAsDataURL(file);
+      } else if (file.type === 'application/pdf') {
+        setFilePreview(null);
       } else {
         setFilePreview(null);
       }
+    }
+  };
+
+  const handleFileSelectImage = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      setAttachIntent('diagnosis');
+      const reader = new FileReader();
+      reader.onloadend = () => { setFilePreview(reader.result); };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -505,7 +634,7 @@ function ChatComposer({ onSendMessage, onNewChat }) {
       const fd = new FormData();
       fd.append('file', file);
       fd.append('save_to_db', 'true');
-      const res = await fetch('http://localhost:8000/api/prescriptions/upload', {
+      const res = await fetch(`${API_URL}/api/prescriptions/upload`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: fd,
@@ -523,13 +652,29 @@ function ChatComposer({ onSendMessage, onNewChat }) {
           p.dietary_advice ? `**Dietary Advice:** ${p.dietary_advice}` : '',
         ].filter(Boolean).join('\n');
         onSendMessage(
-          `I've uploaded my prescription. Here's what was extracted:\n\n${summary}\n\nPlease advise me on how to follow this prescription, any precautions, and what lifestyle changes I should make.`
+          `I've uploaded my prescription. Here's what was extracted:\n\n${summary}\n\nPlease advise me on how to follow this prescription, any precautions, and what lifestyle changes I should make.`,
+          null,
+          'skin',
+          'document',
+          { preferChat: true }
         );
       } else {
-        onSendMessage(`I've uploaded a prescription file. Please help me understand it and advise on medicines and diet.`);
+        onSendMessage(
+          `I've uploaded a prescription file. Please help me understand it and advise on medicines and diet.`,
+          null,
+          'skin',
+          'document',
+          { preferChat: true }
+        );
       }
     } catch (err) {
-      onSendMessage(`I've uploaded a prescription. Please help me understand it.`);
+      onSendMessage(
+        `I've uploaded a prescription. Please help me understand it.`,
+        null,
+        'skin',
+        'document',
+        { preferChat: true }
+      );
     } finally {
       setPrescriptionParsing(false);
       if (prescriptionInputRef.current) prescriptionInputRef.current.value = '';
@@ -539,6 +684,8 @@ function ChatComposer({ onSendMessage, onNewChat }) {
   const removeFile = () => {
     setSelectedFile(null);
     setFilePreview(null);
+    setPdfPreviewUrl(null);
+    setAttachIntent('document');
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (imageInputRef.current) imageInputRef.current.value = '';
   };
@@ -553,7 +700,25 @@ function ChatComposer({ onSendMessage, onNewChat }) {
         </div>
       )}
       {/* File Preview */}
-      {selectedFile && (
+      {selectedFile && selectedFile.type === 'application/pdf' && pdfPreviewUrl && (
+        <div className="mb-3 rounded-xl border border-sidebar-border bg-sidebar overflow-hidden shadow-lg">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-sidebar-border bg-sidebar-hover">
+            <FileText className="w-4 h-4 text-red-400 shrink-0" />
+            <span className="text-sm font-medium text-white truncate flex-1">{selectedFile.name}</span>
+            <span className="text-[10px] font-bold text-muted uppercase tracking-wide">PDF</span>
+            <button type="button" onClick={removeFile} className="text-red-400 hover:text-red-300 px-2 text-lg leading-none" aria-label="Remove file">
+              ×
+            </button>
+          </div>
+          <embed
+            src={`${pdfPreviewUrl}#toolbar=0&navpanes=0`}
+            type="application/pdf"
+            className="w-full h-[220px] bg-neutral-900"
+            title="PDF preview"
+          />
+        </div>
+      )}
+      {selectedFile && !(selectedFile.type === 'application/pdf' && pdfPreviewUrl) && (
         <div className="mb-3 p-3 rounded-lg bg-sidebar-hover border border-sidebar-border flex items-center gap-3">
           {filePreview ? (
             <img src={filePreview} alt="Preview" className="w-12 h-12 rounded object-cover" />
@@ -593,17 +758,18 @@ function ChatComposer({ onSendMessage, onNewChat }) {
             className="bg-sidebar border border-sidebar-border text-white text-xs rounded-lg px-2 py-2 outline-none focus:ring-2 focus:ring-primary/40"
             title="Select medical image modality"
           >
+            <option value="basic">BASIC</option>
             <option value="skin">Skin</option>
             <option value="chest">Chest X-ray</option>
             <option value="eye">Eye</option>
             <option value="brain">Brain</option>
           </select>
-          <input ref={fileInputRef} type="file" onChange={handleFileSelect} className="hidden" accept=".pdf,.doc,.docx,.txt" />
-          <button onClick={() => fileInputRef.current?.click()} className="p-2 text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors" title="Upload File">
+          <input ref={fileInputRef} type="file" onChange={handleFileSelectDoc} className="hidden" accept=".pdf,.doc,.docx,.txt,image/*" />
+          <button onClick={() => fileInputRef.current?.click()} className="p-2 text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors" title="Upload document (PDF, Word, text, or photo of a report for OCR)">
             <Paperclip className="w-5 h-5" />
           </button>
-          <input ref={imageInputRef} type="file" onChange={handleFileSelect} className="hidden" accept="image/*" />
-          <button onClick={() => imageInputRef.current?.click()} className="p-2 text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors" title="Upload Image">
+          <input ref={imageInputRef} type="file" onChange={handleFileSelectImage} className="hidden" accept="image/*" />
+          <button onClick={() => imageInputRef.current?.click()} className="p-2 text-muted hover:text-white hover:bg-white/5 rounded-lg transition-colors" title="Medical image analysis (skin, X-ray, etc.)">
             <Image className="w-5 h-5" />
           </button>
 
@@ -642,13 +808,13 @@ function HealthInsightsPanel() {
     const token = localStorage.getItem('authToken');
     if (!token) return;
     const headers = { 'Authorization': `Bearer ${token}` };
-    fetch('http://localhost:8000/api/health/logs', { headers })
+    fetch(`${API_URL}/api/health/logs`, { headers })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         const logs = Array.isArray(data) ? data : (data?.data || []);
         if (logs.length > 0) setVitals(logs[0]);
       }).catch(() => {});
-    fetch('http://localhost:8000/api/medicine/reminders?active_only=true', { headers })
+    fetch(`${API_URL}/api/medicine/reminders?active_only=true`, { headers })
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (Array.isArray(data)) setReminders(data.slice(0, 4)); })
       .catch(() => {});
@@ -779,7 +945,7 @@ export default function Chatbot() {
 
   const fetchConversations = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/chat/sessions', {
+      const response = await fetch(`${API_URL}/api/chat/sessions`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -796,7 +962,7 @@ export default function Chatbot() {
 
   const loadConversation = async (convSessionId) => {
     try {
-      const response = await fetch(`http://localhost:8000/api/chat/sessions/${convSessionId}`, {
+      const response = await fetch(`${API_URL}/api/chat/sessions/${convSessionId}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
@@ -836,7 +1002,7 @@ export default function Chatbot() {
     }
 
     try {
-      const response = await fetch(`http://localhost:8000/api/chat/sessions/${convSessionId}`, {
+      const response = await fetch(`${API_URL}/api/chat/sessions/${convSessionId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`
@@ -859,10 +1025,21 @@ export default function Chatbot() {
       alert('Error deleting conversation');
     }
   };
-  const handleSendMessage = async (content, file = null, modality = 'skin') => {
+  const handleSendMessage = async (
+    content,
+    file = null,
+    modality = 'basic',
+    attachIntent = 'document',
+    options = {}
+  ) => {
+    const preferChat = options && typeof options === 'object' && options.preferChat === true;
+
     // Get current time
     const now = new Date();
     const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+    const userPdfUrl =
+      file && file.type === 'application/pdf' ? URL.createObjectURL(file) : null;
 
     // Add user message
     const userMessage = {
@@ -871,6 +1048,7 @@ export default function Chatbot() {
       content: content || (file ? `[Attached: ${file.name}]` : ''),
       time: time,
       avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBkv4vcFz8KDsmGpfU3pVy6ZJh5z997ZJYeCKNEIQxq99GBj3o1fNlIG-k7gCaYHsnt4tCkKMkSeFcQSFH-8QlGqPhPxvR6n7CAOLGytqvlwvWz8rFeVwXyv-tNlI-QDRfZiOWM_TZB-tQ_xbBy1-jK1PdQ1f4eWsFWyj2tPzJ26751JuMDcwrsp8menuQUoML5AmxqNfT1ezcYhHjAuhY1T5YJbNpAd_aV7iBm0uFkLKTN4MW2rNIyNNKEyBYyGtRE1g37wKgDIzg',
+      ...(userPdfUrl ? { pdfPreview: userPdfUrl, pdfName: file.name } : {}),
     };
     setMessages(prev => [...prev, userMessage]);
 
@@ -880,52 +1058,59 @@ export default function Chatbot() {
     try {
       let response, data;
 
-      if (file && file.type.startsWith('image/')) {
-        const formData = new FormData();
-        formData.append('image', file);
-        formData.append('modality', modality);
-        if (content) formData.append('symptoms', content);
-
-        response = await fetch('http://localhost:8000/api/diagnose', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-          },
-          body: formData
+      if (file && file.type.startsWith('image/') && attachIntent === 'diagnosis') {
+        data = await diagnosisAPI.completeDiagnosis({
+          symptoms: content,
+          imageFile: file,
+          modality,
         });
       } else if (file) {
-        // Handle file upload
         const formData = new FormData();
         formData.append('file', file);
         if (content) formData.append('message', content);
         if (sessionId) formData.append('session_id', sessionId);
 
-        response = await fetch('http://localhost:8000/api/chat/upload', {
+        response = await fetch(`${API_URL}/api/chat/upload`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('authToken')}`
           },
           body: formData
         });
+        const uploadPayload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const det = uploadPayload.detail;
+          const errText =
+            typeof det === 'string'
+              ? det
+              : Array.isArray(det)
+                ? det.map((d) => d.msg || d).join('; ')
+                : uploadPayload.message || 'File upload failed';
+          throw new Error(errText);
+        }
+        data = {
+          success: true,
+          session_id: uploadPayload.session_id,
+          message: uploadPayload.message,
+        };
+      } else if (!file && (preferChat || shouldUseGeneralChat(content))) {
+        const chatRes = await chatAPI.sendMessage(content, sessionId, false);
+        data = {
+          success: true,
+          session_id: chatRes.session_id,
+          message: chatRes.message,
+          data: null,
+        };
       } else {
-        // Regular text message
-        response = await fetch('http://localhost:8000/api/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-          },
-          body: JSON.stringify({
-            message: content,
-            session_id: sessionId,
-            use_rag: false
-          })
+        // Symptom / triage diagnosis path (not for simple greetings)
+        data = await diagnosisAPI.completeDiagnosis({
+          symptoms: content,
+          imageFile: null,
+          modality,
         });
       }
 
-      data = await response.json();
-      
-      if (response.ok) {
+      if (data?.success !== false) {
         // Store session ID for conversation continuity
         if (data.session_id && !sessionId) {
           setSessionId(data.session_id);
@@ -933,27 +1118,40 @@ export default function Chatbot() {
         }
 
         // Add AI response
-        const diagnosisData = data?.data || data;
-        const aiMessage = diagnosisData?.disease
+        const diagnosisData = data?.data;
+        const normalizedDiagnosis = diagnosisData?.prediction
+          ? {
+              disease: diagnosisData.prediction?.disease,
+              confidence: diagnosisData.prediction?.confidence,
+              modality: diagnosisData.decision_layer?.path === 'image' ? modality : 'text',
+              doctor: diagnosisData.doctor_mapping,
+              treatment: diagnosisData.treatment,
+              tests: diagnosisData.tests,
+              explanation: diagnosisData.rag_llm_output,
+              disclaimer: diagnosisData.disclaimer,
+            }
+          : null;
+
+        const aiMessage = normalizedDiagnosis?.disease
           ? {
               id: messages.length + 2,
               type: 'assistant',
               variant: 'diagnosis',
-              content: `${diagnosisData.disease} detected with ${Math.round((diagnosisData.confidence || 0) * 100)}% confidence`,
-              diagnosis: diagnosisData,
+              content: `${normalizedDiagnosis.disease} detected with ${Math.round((normalizedDiagnosis.confidence || 0) * 100)}% confidence`,
+              diagnosis: normalizedDiagnosis,
               time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
               avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuA94h3IYI8Q6uNTNr6IN9L_pCWz_bAHhfvSVPQxriTMoD3eLnp9OeQrxL3gAUa8QBcgccv4lImUm8UtfbtwsKKufpSaKMkzqMplzUxE_rwtk2kD11mD5WDj-b-8E6Fm7AnIt8cBBhQH31vsJri6dE9uw_OLS1zNINrlzG6bEbGoybuP9qk7B4LDLWGrCCvXyMTlbrNB5M_A4BPaRs5W_W7KPmw4BS1Crvhd5wJ6VRSQvjZP9n_T2_yMGtTox6ZHcWlL5cuulwrkMks',
             }
           : {
               id: messages.length + 2,
               type: 'assistant',
-              content: data.message,
+              content: data?.message || data?.data?.rag_llm_output || 'Unable to generate diagnosis output.',
               time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
               avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuA94h3IYI8Q6uNTNr6IN9L_pCWz_bAHhfvSVPQxriTMoD3eLnp9OeQrxL3gAUa8QBcgccv4lImUm8UtfbtwsKKufpSaKMkzqMplzUxE_rwtk2kD11mD5WDj-b-8E6Fm7AnIt8cBBhQH31vsJri6dE9uw_OLS1zNINrlzG6bEbGoybuP9qk7B4LDLWGrCCvXyMTlbrNB5M_A4BPaRs5W_W7KPmw4BS1Crvhd5wJ6VRSQvjZP9n_T2_yMGtTox6ZHcWlL5cuulwrkMks',
             };
         setMessages(prev => [...prev, aiMessage]);
       } else {
-        throw new Error(data.detail || data?.message || 'Failed to get response');
+        throw new Error(data.detail || data?.message || 'Failed to get diagnosis response');
       }
     } catch (error) {
       console.error('Chat error:', error);
@@ -961,7 +1159,10 @@ export default function Chatbot() {
       const errorMessage = {
         id: messages.length + 2,
         type: 'assistant',
-        content: "I apologize, but I'm having trouble connecting right now. Please try again in a moment.",
+        content:
+          error?.message && String(error.message).length < 400
+            ? `**Could not complete request**\n\n${error.message}`
+            : "I apologize, but I'm having trouble connecting right now. Please try again in a moment.",
         time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
         avatar: 'https://lh3.googleusercontent.com/aida-public/AB6AXuA94h3IYI8Q6uNTNr6IN9L_pCWz_bAHhfvSVPQxriTMoD3eLnp9OeQrxL3gAUa8QBcgccv4lImUm8UtfbtwsKKufpSaKMkzqMplzUxE_rwtk2kD11mD5WDj-b-8E6Fm7AnIt8cBBhQH31vsJri6dE9uw_OLS1zNINrlzG6bEbGoybuP9qk7B4LDLWGrCCvXyMTlbrNB5M_A4BPaRs5W_W7KPmw4BS1Crvhd5wJ6VRSQvjZP9n_T2_yMGtTox6ZHcWlL5cuulwrkMks',
       };

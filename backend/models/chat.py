@@ -29,3 +29,5 @@ class ChatResponse(BaseModel):
     message: str
     session_id: str
     sources: Optional[List[dict]] = None
+    success: bool = True
+    extracted_preview: Optional[str] = None

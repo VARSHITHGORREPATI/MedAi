@@ -14,6 +14,13 @@ import torch.nn as nn
 from PIL import Image
 from torchvision import transforms
 
+from models.medmnist_labels import (
+    CHEST_DISPLAY_CLASSES,
+    DERMA_DISPLAY_CLASSES,
+    OCT_DISPLAY_CLASSES,
+    ORGAN_S_DISPLAY_CLASSES,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,62 +35,29 @@ class ImageDiagnosisService:
             "model_path": "backend/models/weights/efficientnet_skin_disease.pth",
             "default_backbone": "efficientnet_b0",
             "default_image_size": 224,
-            "disease_classes": [
-                "Acne",
-                "Eczema",
-                "Melanoma",
-                "Psoriasis",
-                "Vitiligo",
-                "Rosacea",
-                "Normal",
-            ],
+            # MedMNIST DermaMNIST (7); train with scripts/train_medmnist_efficientnet.py --modality skin
+            "disease_classes": list(DERMA_DISPLAY_CLASSES),
         },
         "chest": {
             "model_path": "backend/models/weights/efficientnet_chest_disease.pth",
             "default_backbone": "efficientnet_b0",
             "default_image_size": 224,
-            "disease_classes": [
-                "Atelectasis",
-                "Cardiomegaly",
-                "Effusion",
-                "Infiltration",
-                "Mass",
-                "Nodule",
-                "Pneumonia",
-                "Pneumothorax",
-                "Consolidation",
-                "Edema",
-                "Emphysema",
-                "Fibrosis",
-                "Pleural Thickening",
-                "Hernia",
-            ],
+            # MedMNIST ChestMNIST: 14 labels (multi-label); training script saves class names + multi_label flag.
+            "disease_classes": list(CHEST_DISPLAY_CLASSES),
         },
         "eye": {
             "model_path": "backend/models/weights/efficientnet_eye_disease.pth",
             "default_backbone": "efficientnet_b0",
             "default_image_size": 224,
-            "disease_classes": [
-                "Normal",
-                "Diabetic Retinopathy",
-                "Glaucoma",
-                "Cataract",
-                "Age-related Macular Degeneration",
-                "Hypertension",
-                "Myopia",
-                "Other Abnormalities",
-            ],
+            # MedMNIST OCTMNIST (4 retinal OCT classes)
+            "disease_classes": list(OCT_DISPLAY_CLASSES),
         },
         "brain": {
             "model_path": "backend/models/weights/efficientnet_brain_disease.pth",
             "default_backbone": "efficientnet_b0",
             "default_image_size": 224,
-            "disease_classes": [
-                "Glioma",
-                "Meningioma",
-                "Pituitary",
-                "No Tumor",
-            ],
+            # MedMNIST OrganSMNIST: abdominal CT organ slices (not brain MRI). Train: --modality brain
+            "disease_classes": list(ORGAN_S_DISPLAY_CLASSES),
         },
     }
     
@@ -223,7 +197,14 @@ class ImageDiagnosisService:
             self.modality_backbones[modality] = backbone
             self.modality_image_sizes[modality] = image_size
             self.transforms[modality] = self._get_transform(image_size)
-            self.model_metadata[modality] = metadata
+
+            meta_dict = dict(metadata) if isinstance(metadata, dict) else {}
+            ml = meta_dict.get("multi_label")
+            if ml is None and modality == "chest":
+                ds = str(meta_dict.get("dataset", "")).lower()
+                ml = "medmnist" in ds or "chestmnist" in ds
+            meta_dict["multi_label"] = bool(ml) if ml is not None else False
+            self.model_metadata[modality] = meta_dict
 
             model = self._create_model(backbone, num_classes=len(self.modality_classes[modality]))
             model.load_state_dict(state_dict)
@@ -318,14 +299,20 @@ class ImageDiagnosisService:
             tensor = self.preprocess_image(image_data, modality=modality)
             tensor = tensor.to(self.device)
 
+            multi_label = bool(self.model_metadata.get(modality, {}).get("multi_label"))
+
             # Run inference
             with torch.no_grad():
                 logits = model(tensor)
-                probabilities = torch.nn.functional.softmax(logits, dim=1)
-                probs = probabilities[0].cpu().numpy()
+                if multi_label:
+                    probabilities = torch.sigmoid(logits)
+                    probs = probabilities[0].cpu().numpy()
+                else:
+                    probabilities = torch.nn.functional.softmax(logits, dim=1)
+                    probs = probabilities[0].cpu().numpy()
 
-            # Get top prediction
-            top_idx = probs.argmax()
+            # Get top prediction (highest probability mass)
+            top_idx = int(probs.argmax())
             top_disease = class_names[top_idx]
             top_confidence = float(probs[top_idx])
 
@@ -339,19 +326,24 @@ class ImageDiagnosisService:
             ]
             all_predictions.sort(key=lambda x: x['confidence'], reverse=True)
 
-            # Check if meets confidence threshold
-            meets_threshold = top_confidence >= self.confidence_threshold
+            # Multi-label (MedMNIST Chest): threshold per-class probability
+            if multi_label:
+                meets_threshold = top_confidence >= max(0.35, self.confidence_threshold * 0.5)
+            else:
+                meets_threshold = top_confidence >= self.confidence_threshold
 
             result = {
                 'modality': modality,
                 'disease': top_disease,
                 'confidence': top_confidence,
                 'all_predictions': all_predictions,
-                'meets_threshold': meets_threshold
+                'meets_threshold': meets_threshold,
+                'multi_label': multi_label,
             }
 
             logger.info(
                 f"🔍 Prediction ({modality}): {top_disease} ({top_confidence:.2%})"
+                + (" [multi-label]" if multi_label else "")
             )
 
             return result

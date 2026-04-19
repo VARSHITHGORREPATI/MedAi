@@ -197,24 +197,22 @@ async def upload_file(
     file: UploadFile = File(...),
     message: Optional[str] = Form(None),
     session_id: Optional[str] = Form(None),
+    use_rag: bool = Form(True),
     current_user: dict = Depends(get_current_user)
 ):
-    """Upload a file and get AI response"""
+    """Upload a document or image; extract text (PDF/DOCX/TXT or Gemini vision) and answer with AI."""
     db = get_database()
     user_id = str(current_user["_id"])
-    
-    # Read file content
+
     file_content = await file.read()
     file_size = len(file_content)
-    
-    # Validate file size (max 10MB)
+
     if file_size > 10 * 1024 * 1024:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="File size exceeds 10MB limit"
         )
-    
-    # Get or create session
+
     if session_id:
         session = await db.chat_sessions.find_one({
             "_id": ObjectId(session_id),
@@ -226,7 +224,6 @@ async def upload_file(
                 detail="Chat session not found"
             )
     else:
-        # Create new session
         session = {
             "user_id": user_id,
             "title": f"File: {file.filename}",
@@ -236,9 +233,27 @@ async def upload_file(
         }
         result = await db.chat_sessions.insert_one(session)
         session["_id"] = result.inserted_id
-    
-    # Create user message with file info
-    user_content = message or f"I've uploaded a file: {file.filename}"
+
+    ctype = (file.content_type or "").lower()
+    extracted = ""
+    extract_note = ""
+
+    if ctype.startswith("image/"):
+        extracted = await ai_service.extract_text_from_image(file_content, ctype or "image/jpeg")
+        if extracted.startswith("[Image text extraction failed"):
+            extract_note = extracted
+            extracted = ""
+        elif not (extracted or "").strip():
+            extract_note = (
+                "Photo OCR needs Google Gemini. Set **AI_PROVIDER=gemini** and **GEMINI_API_KEY** in `backend/.env`, "
+                "or upload a **PDF / DOCX** export of the document instead."
+            )
+    else:
+        from services.document_extract import extract_document_text
+        extracted, extract_note = extract_document_text(file.filename, file.content_type, file_content)
+
+    preview = (extracted or "")[:1200]
+    user_content = message or f"I've uploaded **{file.filename}** ({file_size / 1024:.1f} KB)."
     user_message = {
         "role": "user",
         "content": user_content,
@@ -247,22 +262,69 @@ async def upload_file(
             "type": file.content_type,
             "size": file_size
         },
+        "extracted_preview": preview or None,
         "timestamp": datetime.utcnow()
     }
-    
-    # Generate AI response about the file
-    ai_response = f"I can see you've uploaded **{file.filename}** ({file_size / 1024:.1f} KB). " \
-                  f"While I cannot directly analyze files yet, I can help answer questions or provide guidance based on what you tell me about it. " \
-                  f"What would you like to know?"
-    
-    # Add assistant message
+
+    sources = None
+    if not (extracted or "").strip():
+        if extract_note:
+            ai_response = (
+                f"I received **{file.filename}**, but could not read usable text from it.\n\n"
+                f"{extract_note}\n\n"
+                "Try PDF or DOCX (not scanned-only PDF without OCR), or configure Gemini for photo uploads."
+            )
+        else:
+            ai_response = (
+                f"I received **{file.filename}**, but no text could be extracted. "
+                "Try a text-based PDF, DOCX, TXT, or a clearer photo with **GEMINI_API_KEY** set for OCR."
+            )
+    else:
+        combined = (
+            f"The user uploaded a file named `{file.filename}`.\n\n"
+            f"--- Extracted content ---\n{extracted.strip()}\n--- End extract ---\n\n"
+            f"User note / question: {message or 'Please summarize this document, highlight abnormal values if any, and suggest sensible next steps (not a formal diagnosis).'}"
+        )
+        doc_system = (
+            "You are MedAI, a medical assistant. The user shared extracted text from a file (PDF, Word, or image OCR). "
+            "Summarize clearly with short headings and bullets when helpful. Note noteworthy values or concerns in neutral language. "
+            "Complete every sentence—do not stop mid-phrase. Mention red-flag symptoms or when to seek urgent care. "
+            "Do not give a definitive diagnosis or prescribe medications."
+        )
+        try:
+            if use_rag:
+                ai_response, sources = await ai_service.get_rag_response(
+                    combined,
+                    session.get("messages", []),
+                    max_output_tokens=2048,
+                )
+            else:
+                ai_response = await ai_service.get_simple_response(
+                    combined,
+                    session.get("messages", []),
+                    max_tokens=2048,
+                    system_prompt=doc_system,
+                )
+        except Exception as e:
+            sources = None
+            error_msg = str(e).lower()
+            if "rate limit" in error_msg or "429" in error_msg or "quota" in error_msg:
+                ai_response = (
+                    "⚠️ **Rate limit** while analyzing your file. Please wait a few minutes and try again.\n\n"
+                    f"**Extract preview (first ~400 chars):** {extracted[:400]}…"
+                )
+            else:
+                ai_response = (
+                    f"⚠️ I extracted text from your file but the AI step failed: {str(e)[:200]}\n\n"
+                    f"**Preview:** {extracted[:600]}…"
+                )
+
     assistant_message = {
         "role": "assistant",
         "content": ai_response,
         "timestamp": datetime.utcnow()
     }
-    
-    # Update session
+
     await db.chat_sessions.update_one(
         {"_id": session["_id"]},
         {
@@ -274,11 +336,13 @@ async def upload_file(
             "$set": {"updated_at": datetime.utcnow()}
         }
     )
-    
+
     return ChatResponse(
         message=ai_response,
         session_id=str(session["_id"]),
-        sources=None
+        sources=sources,
+        success=True,
+        extracted_preview=preview[:500] if preview else None,
     )
     
 @router.post("/generate-recommendations")

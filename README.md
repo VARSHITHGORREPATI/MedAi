@@ -24,13 +24,17 @@ MedAI/
 
 ### Backend
 
+From the `backend` folder, install dependencies once (uses your default `python` / `pip`; no virtual environment is required):
+
 ```bash
 cd backend
-python -m venv .venv
-.venv\Scripts\activate
 pip install -r requirements.txt
 python main.py
 ```
+
+On Windows you can use `py -m pip install -r requirements.txt` and `py main.py` if `python` is not on your PATH.
+
+If you use a virtual environment (`.venv`) for isolation, the editor is configured not to auto-activate it in the integrated terminal; run `python main.py` the same way.
 
 ### Frontend
 
