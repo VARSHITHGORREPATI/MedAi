@@ -271,12 +271,19 @@ class ModalityDetector:
                                   np.mean(np.abs(g.astype(float) - b.astype(float))) + \
                                   np.mean(np.abs(r.astype(float) - b.astype(float)))
                 
-                # If color variance is very low AND pixel differences are small, it's grayscale
-                # Increased thresholds to be more lenient - real color images have much higher variance
-                is_effectively_grayscale = (color_variance < 3) and (pixel_color_diff < 10)
+                # Check if there's ANY color variation in the image (not just means)
+                # Skin images have color variation even if overall tone is similar
+                r_std = np.std(r)
+                g_std = np.std(g)
+                b_std = np.std(b)
+                channel_variation = max(abs(r_std - g_std), abs(g_std - b_std), abs(r_std - b_std))
+                
+                # If color variance is very low AND pixel differences are small AND no channel variation, it's grayscale
+                # Real color images (like skin) have channel variation even with similar overall tone
+                is_effectively_grayscale = (color_variance < 3) and (pixel_color_diff < 10) and (channel_variation < 5)
                 
                 # Log color analysis for debugging
-                logger.debug(f"Color analysis: variance={color_variance:.2f}, pixel_diff={pixel_color_diff:.2f}, is_gray={is_effectively_grayscale}")
+                logger.debug(f"Color analysis: variance={color_variance:.2f}, pixel_diff={pixel_color_diff:.2f}, channel_var={channel_variation:.2f}, is_gray={is_effectively_grayscale}")
             else:
                 is_effectively_grayscale = True
         else:
@@ -335,11 +342,14 @@ class ModalityDetector:
         score = 0.0
         characteristics = self.image_characteristics[modality]
         
-        # Color mode score (MOST IMPORTANT - 50% weight)
+        # Color mode score (MOST IMPORTANT - 60% weight)
         if modality == "skin":
             # Skin images should be colorful RGB
             if not analysis["is_grayscale"]:
-                score += 0.5  # Very strong indicator for skin
+                score += 0.6  # Very strong indicator for skin
+                # Extra bonus if image mode is explicitly RGB
+                if analysis.get("mode") == "RGB":
+                    score += 0.1
             else:
                 score += 0.0  # Grayscale images are NOT skin
         else:
@@ -348,6 +358,8 @@ class ModalityDetector:
                 score += 0.3  # Good indicator for medical scans
             else:
                 score += 0.0  # Color images are not medical scans
+                # Penalty for non-grayscale medical images
+                return 0.0  # Hard cutoff - medical scans must be grayscale
         
         # Aspect ratio score (5% weight)
         expected_ratio = characteristics["typical_aspect_ratio"]

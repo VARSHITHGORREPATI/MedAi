@@ -105,13 +105,23 @@ class ImageDiagnosisService:
         logger.info(f"   Confidence threshold: {confidence_threshold}")
 
         for modality, path in self.modality_model_paths.items():
+            # Check for both .pth and .pth.zip
+            zip_path = path + ".zip"
+            
             if os.path.exists(path):
+                logger.info(f"📁 Found {modality} model at {path}")
                 try:
                     self._load_model(modality)
                 except Exception as exc:
                     logger.warning(f"⚠️ Failed to load {modality} model from {path}: {exc}")
+            elif os.path.exists(zip_path):
+                logger.info(f"📁 Found {modality} model at {zip_path}")
+                try:
+                    self._load_model(modality)
+                except Exception as exc:
+                    logger.warning(f"⚠️ Failed to load {modality} model from {zip_path}: {exc}")
             else:
-                logger.warning(f"⚠️ {modality.capitalize()} model weights not found at {path}")
+                logger.warning(f"⚠️ {modality.capitalize()} model weights not found at {path} or {zip_path}")
     
     def _get_transform(self, image_size: int = 224) -> transforms.Compose:
         """
@@ -175,12 +185,25 @@ class ImageDiagnosisService:
         return cleaned_state_dict
 
     def _load_model(self, modality: str):
-        """Load modality model weights from .pth file"""
+        """Load modality model weights from .pth file or .pth.zip file"""
         model_path = self.modality_model_paths[modality]
+        
+        # Check if .pth.zip exists instead of .pth
+        zip_path = model_path + ".zip"
+        if not os.path.exists(model_path) and os.path.exists(zip_path):
+            logger.info(f"📦 Found zip file for {modality} model, using {zip_path}")
+            model_path = zip_path
+        
         try:
             logger.info(f"📥 Loading {modality} model weights from {model_path}")
 
-            checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+            # Handle both regular .pth and .pth.zip files
+            if model_path.endswith('.zip'):
+                # PyTorch can load directly from zip files
+                checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+            else:
+                checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+            
             state_dict, metadata = self._extract_state_dict(checkpoint)
             state_dict = self._clean_state_dict(state_dict)
 
@@ -336,14 +359,17 @@ class ImageDiagnosisService:
                 'modality': modality,
                 'disease': top_disease,
                 'confidence': top_confidence,
-                'all_predictions': all_predictions,
+                'all_predictions': all_predictions[:5],  # Top 5 predictions
                 'meets_threshold': meets_threshold,
                 'multi_label': multi_label,
+                'confidence_level': 'high' if top_confidence >= 0.7 else 'medium' if top_confidence >= 0.4 else 'low',
+                'warning': 'Low confidence - model uncertain. Consider consulting a medical professional.' if top_confidence < 0.3 else None
             }
 
             logger.info(
                 f"🔍 Prediction ({modality}): {top_disease} ({top_confidence:.2%})"
                 + (" [multi-label]" if multi_label else "")
+                + (f" [LOW CONFIDENCE]" if top_confidence < 0.3 else "")
             )
 
             return result

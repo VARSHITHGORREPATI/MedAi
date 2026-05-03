@@ -134,20 +134,33 @@ def quick_train_model(modality: str, output_path: Path, epochs: int = 3):
         info = INFO[dataset_name]
         DataClass = getattr(medmnist, info['python_class'])
         
-        # Transforms
-        transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
+        # Transforms - handle grayscale datasets
+        if modality == "skin":
+            # Skin images are RGB
+            transform = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+        else:
+            # Chest, eye, brain are grayscale - need to convert to 3-channel
+            # Lambda to repeat grayscale channel 3 times after ToTensor
+            transform = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Lambda(lambda x: x.repeat(3, 1, 1) if x.size(0) == 1 else x),  # 1-channel -> 3-channel
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
         
         # Load datasets
         logger.info("📥 Downloading MedMNIST dataset...")
         train_dataset = DataClass(split='train', transform=transform, download=True)
         val_dataset = DataClass(split='val', transform=transform, download=True)
         
-        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=2)
-        val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=2)
+        # Use num_workers=0 to avoid multiprocessing issues with Lambda transforms
+        # Larger batch size = faster training (fewer iterations per epoch)
+        train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=0)
+        val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False, num_workers=0)
         
         # Create model
         logger.info("🏗️  Creating EfficientNet-B0 model...")
@@ -310,10 +323,8 @@ def download_model(modality: str, method: str = "auto", epochs: int = 3):
     output_path = Path(f"backend/models/weights/efficientnet_{modality}_disease.pth")
     
     if output_path.exists():
-        logger.info(f"ℹ️  Model already exists at {output_path}")
-        response = input("Overwrite? (y/n): ")
-        if response.lower() != 'y':
-            return True
+        logger.info(f"ℹ️  Model already exists at {output_path}, overwriting...")
+        output_path.unlink()  # Delete the existing file
     
     logger.info(f"📦 Processing {modality} model...")
     

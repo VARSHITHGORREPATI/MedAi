@@ -155,6 +155,14 @@ class MultimodalDiagnosisService:
     def _get_image_prediction(self, image_bytes: bytes, modality: str) -> Dict:
         """Get prediction from image model"""
         try:
+            # Auto-detect modality if set to "auto"
+            if modality == "auto":
+                from services.modality_detector import get_modality_detector
+                detector = get_modality_detector()
+                detected_modality, confidence, details = detector.detect_from_image(image_bytes)
+                modality = detected_modality
+                print(f"🔍 Auto-detected modality: {modality} (confidence: {confidence:.2f})")
+            
             result = self.image_service.predict(
                 image_data=image_bytes,
                 modality=modality
